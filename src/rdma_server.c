@@ -9,6 +9,25 @@
 
 #include "rdma_common.h"
 
+/*
+struct rdma_cm_id {
+	struct ibv_context	*verbs;
+	struct rdma_event_channel *channel;
+	void			*context;
+	struct ibv_qp		*qp;
+	struct rdma_route	 route;
+	enum rdma_port_space	 ps;
+	uint8_t			 port_num;
+	struct rdma_cm_event	*event;
+	struct ibv_comp_channel *send_cq_channel;
+	struct ibv_cq		*send_cq;
+	struct ibv_comp_channel *recv_cq_channel;
+	struct ibv_cq		*recv_cq;
+	struct ibv_srq		*srq;
+	struct ibv_pd		*pd;
+	enum ibv_qp_type	qp_type;
+};
+*/
 /* These are the RDMA resources needed to setup an RDMA connection */
 /* Event channel, where connection management (cm) related events are relayed */
 static struct rdma_event_channel *cm_event_channel = NULL;
@@ -47,6 +66,7 @@ static int setup_client_resources()
 	 * in the operating system. All resources are tied to a particular PD. 
 	 * And accessing recourses across PD will result in a protection fault.
 	 */
+    // pd: 进程可以access的内存空间
 	pd = ibv_alloc_pd(cm_client_id->verbs 
 			/* verbs defines a verb's provider, 
 			 * i.e an RDMA device where the incoming 
@@ -57,12 +77,13 @@ static int setup_client_resources()
 		return -errno;
 	}
 	debug("A new protection domain is allocated at %p \n", pd);
-	/* Now we need a completion channel, were the I/O completion 
+	/* Now we need a completion channel, where the I/O completion 
 	 * notifications are sent. Remember, this is different from connection 
 	 * management (CM) event notifications. 
 	 * A completion channel is also tied to an RDMA device, hence we will 
 	 * use cm_client_id->verbs. 
 	 */
+    // 建立一个用来存储complete信息的channel，和client verbs绑定。
 	io_completion_channel = ibv_create_comp_channel(cm_client_id->verbs);
 	if (!io_completion_channel) {
 		rdma_error("Failed to create an I/O completion event channel, %d\n",
@@ -77,6 +98,7 @@ static int setup_client_resources()
 	 * information about the work completion. An I/O request in RDMA world 
 	 * is called "work" ;) 
 	 */
+    // 在completion channel上建立一个completion queue
 	cq = ibv_create_cq(cm_client_id->verbs /* which device*/, 
 			CQ_CAPACITY /* maximum capacity*/, 
 			NULL /* user context, not used here */,
@@ -87,9 +109,12 @@ static int setup_client_resources()
 				-errno);
 		return -errno;
 	}
+    // completion queue: used to notify when the work is completed
 	debug("Completion queue (CQ) is created at %p with %d elements \n", 
 			cq, cq->cqe);
 	/* Ask for the event for all activities in the completion queue*/
+    // completion channel和completion queue是等价的？每次CQ里面收到一个work 
+    // completion，就会产生一个event在channel里面？
 	ret = ibv_req_notify_cq(cq /* on which CQ */, 
 			0 /* 0 = all event type, no filter*/);
 	if (ret) {
@@ -109,7 +134,7 @@ static int setup_client_resources()
        /* We use same completion queue, but one can use different queues */
        qp_init_attr.recv_cq = cq; /* Where should I notify for receive completion operations */
        qp_init_attr.send_cq = cq; /* Where should I notify for send completion operations */
-       /*Lets create a QP */
+       /*Lets create a query pair QP */
        ret = rdma_create_qp(cm_client_id /* which connection id */,
 		       pd /* which protection domain*/,
 		       &qp_init_attr /* Initial attributes */);
@@ -146,6 +171,7 @@ static int start_rdma_server(struct sockaddr_in *server_addr)
 	}
 	debug("A RDMA connection id for the server is created \n");
 	/* Explicit binding of rdma cm id to the socket credentials */
+    // binding the cm id to the server?? could be 0.0.0.0, means myself
 	ret = rdma_bind_addr(cm_server_id, (struct sockaddr*) server_addr);
 	if (ret) {
 		rdma_error("Failed to bind server address, errno: %d \n", -errno);
@@ -157,6 +183,7 @@ static int start_rdma_server(struct sockaddr_in *server_addr)
 	 * connected, a new connection management (CM) event is generated on the 
 	 * RDMA CM event channel from where the listening id was created. Here we
 	 * have only one channel, so it is easy. */
+    // backlog: max length of pending connections
 	ret = rdma_listen(cm_server_id, 8); /* backlog = 8 clients, same as TCP, see man listen*/
 	if (ret) {
 		rdma_error("rdma_listen failed to listen on server address, errno: %d ",
@@ -187,6 +214,7 @@ static int start_rdma_server(struct sockaddr_in *server_addr)
 	 * must be made before acknowledgment. Like, we have already saved the 
 	 * client id from "id" field before acknowledging the event. 
 	 */
+    // return 0 on success, -1 on error
 	ret = rdma_ack_cm_event(cm_event);
 	if (ret) {
 		rdma_error("Failed to acknowledge the cm event errno: %d \n", -errno);
@@ -208,10 +236,11 @@ static int accept_client_connection()
 		return -EINVAL;
 	}
 	/* we prepare the receive buffer in which we will receive the client metadata*/
-        client_metadata_mr = rdma_buffer_register(pd /* which protection domain */, 
-			&client_metadata_attr /* what memory */,
-			sizeof(client_metadata_attr) /* what length */, 
-		       (IBV_ACCESS_LOCAL_WRITE) /* access permissions */);
+    // wrapper，just register a memory region of given add and length
+    client_metadata_mr = rdma_buffer_register(pd /* which protection domain */, 
+        &client_metadata_attr /* what memory */,
+        sizeof(client_metadata_attr) /* what length */, 
+            (IBV_ACCESS_LOCAL_WRITE) /* access permissions */);
 	if(!client_metadata_mr){
 		rdma_error("Failed to register client attr buffer\n");
 		//we assume ENOMEM
@@ -226,6 +255,7 @@ static int accept_client_connection()
 	bzero(&client_recv_wr, sizeof(client_recv_wr));
 	client_recv_wr.sg_list = &client_recv_sge;
 	client_recv_wr.num_sge = 1; // only one SGE
+    // 告知我们可以recv了？
 	ret = ibv_post_recv(client_qp /* which QP */,
 		      &client_recv_wr /* receive work request*/,
 		      &bad_client_recv_wr /* error WRs */);
@@ -236,27 +266,28 @@ static int accept_client_connection()
 	debug("Receive buffer pre-posting is successful \n");
 	/* Now we accept the connection. Recall we have not accepted the connection 
 	 * yet because we have to do lots of resource pre-allocation */
-       memset(&conn_param, 0, sizeof(conn_param));
-       /* this tell how many outstanding requests can we handle */
-       conn_param.initiator_depth = 3; /* For this exercise, we put a small number here */
-       /* This tell how many outstanding requests we expect other side to handle */
-       conn_param.responder_resources = 3; /* For this exercise, we put a small number */
-       ret = rdma_accept(cm_client_id, &conn_param);
-       if (ret) {
-	       rdma_error("Failed to accept the connection, errno: %d \n", -errno);
-	       return -errno;
-       }
-       /* We expect an RDMA_CM_EVNET_ESTABLISHED to indicate that the RDMA  
+    // 接受connection
+    memset(&conn_param, 0, sizeof(conn_param));
+    /* this tell how many outstanding requests can we handle */
+    conn_param.initiator_depth = 3; /* For this exercise, we put a small number here */
+    /* This tell how many outstanding requests we expect other side to handle */
+    conn_param.responder_resources = 3; /* For this exercise, we put a small number */
+    ret = rdma_accept(cm_client_id, &conn_param);
+    if (ret) {
+        rdma_error("Failed to accept the connection, errno: %d \n", -errno);
+        return -errno;
+    }
+    /* We expect an RDMA_CM_EVNET_ESTABLISHED to indicate that the RDMA  
 	* connection has been established and everything is fine on both, server 
 	* as well as the client sides.
 	*/
-        debug("Going to wait for : RDMA_CM_EVENT_ESTABLISHED event \n");
-       ret = process_rdma_cm_event(cm_event_channel, 
-		       RDMA_CM_EVENT_ESTABLISHED,
-		       &cm_event);
-        if (ret) {
-		rdma_error("Failed to get the cm event, errnp: %d \n", -errno);
-		return -errno;
+    debug("Going to wait for : RDMA_CM_EVENT_ESTABLISHED event \n");
+    ret = process_rdma_cm_event(cm_event_channel, 
+            RDMA_CM_EVENT_ESTABLISHED,
+            &cm_event);
+    if (ret) {
+    rdma_error("Failed to get the cm event, errnp: %d \n", -errno);
+    return -errno;
 	}
 	/* We acknowledge the event */
 	ret = rdma_ack_cm_event(cm_event);
@@ -283,6 +314,7 @@ static int send_server_metadata_to_client()
 	 * in our example. We will receive a work completion notification for 
 	 * our pre-posted receive request.
 	 */
+    // 这个WC是哪里来的？是client发metadata的时候嘛？
 	ret = process_work_completion_events(io_completion_channel, &wc, 1);
 	if (ret != 1) {
 		rdma_error("Failed to receive , ret = %d \n", ret);
@@ -295,65 +327,69 @@ static int send_server_metadata_to_client()
 			client_metadata_attr.length);
 	/* We need to setup requested memory buffer. This is where the client will 
 	* do RDMA READs and WRITEs. */
-       server_buffer_mr = rdma_buffer_alloc(pd /* which protection domain */, 
-		       client_metadata_attr.length /* what size to allocate */, 
-		       (IBV_ACCESS_LOCAL_WRITE|
-		       IBV_ACCESS_REMOTE_READ|
-		       IBV_ACCESS_REMOTE_WRITE) /* access permissions */);
-       if(!server_buffer_mr){
-	       rdma_error("Server failed to create a buffer \n");
-	       /* we assume that it is due to out of memory error */
-	       return -ENOMEM;
-       }
-       /* This buffer is used to transmit information about the above 
+    // alloc the buffer that will be used to save client data
+    server_buffer_mr = rdma_buffer_alloc(pd /* which protection domain */, 
+            client_metadata_attr.length /* what size to allocate */, 
+            (IBV_ACCESS_LOCAL_WRITE|
+            IBV_ACCESS_REMOTE_READ|
+            IBV_ACCESS_REMOTE_WRITE) /* access permissions */);
+    if(!server_buffer_mr){
+        rdma_error("Server failed to create a buffer \n");
+        /* we assume that it is due to out of memory error */
+        return -ENOMEM;
+    }
+    /* This buffer is used to transmit information about the above 
 	* buffer to the client. So this contains the metadata about the server 
 	* buffer. Hence this is called metadata buffer. Since this is already 
-	* on allocated, we just register it. 
-        * We need to prepare a send I/O operation that will tell the 
+	* on allocated, we just register it on server side.
+    * We also need to prepare a send I/O operation that will tell the 
 	* client the address of the server buffer. 
 	*/
-       server_metadata_attr.address = (uint64_t) server_buffer_mr->addr;
-       server_metadata_attr.length = (uint32_t) server_buffer_mr->length;
-       server_metadata_attr.stag.local_stag = (uint32_t) server_buffer_mr->lkey;
-       server_metadata_mr = rdma_buffer_register(pd /* which protection domain*/, 
-		       &server_metadata_attr /* which memory to register */, 
-		       sizeof(server_metadata_attr) /* what is the size of memory */,
-		       IBV_ACCESS_LOCAL_WRITE /* what access permission */);
-       if(!server_metadata_mr){
-	       rdma_error("Server failed to create to hold server metadata \n");
-	       /* we assume that this is due to out of memory error */
-	       return -ENOMEM;
-       }
-       /* We need to transmit this buffer. So we create a send request. 
+    // reg the newly alloced buffer on server side
+    server_metadata_attr.address = (uint64_t) server_buffer_mr->addr;
+    server_metadata_attr.length = (uint32_t) server_buffer_mr->length;
+    server_metadata_attr.stag.local_stag = (uint32_t) server_buffer_mr->lkey;
+    server_metadata_mr = rdma_buffer_register(pd /* which protection domain*/, 
+            &server_metadata_attr /* which memory to register */, 
+            sizeof(server_metadata_attr) /* what is the size of memory */,
+            IBV_ACCESS_LOCAL_WRITE /* what access permission */);
+    if(!server_metadata_mr){
+        rdma_error("Server failed to create to hold server metadata \n");
+        /* we assume that this is due to out of memory error */
+        return -ENOMEM;
+    }
+    /* We need to transmit this buffer. So we create a send request. 
 	* A send request consists of multiple SGE elements. In our case, we only
 	* have one 
 	*/
-       server_send_sge.addr = (uint64_t) &server_metadata_attr;
-       server_send_sge.length = sizeof(server_metadata_attr);
-       server_send_sge.lkey = server_metadata_mr->lkey;
-       /* now we link this sge to the send request */
-       bzero(&server_send_wr, sizeof(server_send_wr));
-       server_send_wr.sg_list = &server_send_sge;
-       server_send_wr.num_sge = 1; // only 1 SGE element in the array 
-       server_send_wr.opcode = IBV_WR_SEND; // This is a send request 
-       server_send_wr.send_flags = IBV_SEND_SIGNALED; // We want to get notification 
-       /* This is a fast data path operation. Posting an I/O request */
-       ret = ibv_post_send(client_qp /* which QP */, 
-		       &server_send_wr /* Send request that we prepared before */, 
-		       &bad_server_send_wr /* In case of error, this will contain failed requests */);
-       if (ret) {
-	       rdma_error("Posting of server metdata failed, errno: %d \n",
-			       -errno);
-	       return -errno;
-       }
-       /* We check for completion notification */
-       ret = process_work_completion_events(io_completion_channel, &wc, 1);
-       if (ret != 1) {
-	       rdma_error("Failed to send server metadata, ret = %d \n", ret);
-	       return ret;
-       }
-       debug("Local buffer metadata has been sent to the client \n");
-       return 0;
+    // send the newly alloced buffer info to client
+    server_send_sge.addr = (uint64_t) &server_metadata_attr;
+    server_send_sge.length = sizeof(server_metadata_attr);
+    server_send_sge.lkey = server_metadata_mr->lkey;
+    /* now we link this sge to the send request */
+    bzero(&server_send_wr, sizeof(server_send_wr));
+    server_send_wr.sg_list = &server_send_sge;
+    server_send_wr.num_sge = 1; // only 1 SGE element in the array 
+    server_send_wr.opcode = IBV_WR_SEND; // This is a send request 
+    server_send_wr.send_flags = IBV_SEND_SIGNALED; // We want to get notification 
+    /* This is a fast data path operation. Posting an I/O request */
+    ret = ibv_post_send(client_qp /* which QP */, 
+            &server_send_wr /* Send request that we prepared before */, 
+            &bad_server_send_wr /* In case of error, this will contain failed requests */);
+    if (ret) {
+        rdma_error("Posting of server metdata failed, errno: %d \n",
+                -errno);
+        return -errno;
+    }
+    /* We check for completion notification */
+    // 如果没完成，WC就不会被发送？？？会有延迟嘛？谁在发？client还是server自己？
+    ret = process_work_completion_events(io_completion_channel, &wc, 1);
+    if (ret != 1) {
+        rdma_error("Failed to send server metadata, ret = %d \n", ret);
+        return ret;
+    }
+    debug("Local buffer metadata has been sent to the client \n");
+    return 0;
 }
 
 /* This is server side logic. Server passively waits for the client to call 
@@ -433,10 +469,11 @@ int main(int argc, char **argv)
 {
 	int ret, option;
 	struct sockaddr_in server_sockaddr;
-	bzero(&server_sockaddr, sizeof server_sockaddr);
+	bzero(&server_sockaddr, sizeof server_sockaddr);  // set to 0
 	server_sockaddr.sin_family = AF_INET; /* standard IP NET address */
 	server_sockaddr.sin_addr.s_addr = htonl(INADDR_ANY); /* passed address */
 	/* Parse Command Line Arguments, not the most reliable code */
+    // 获取-a ip地址，-p 端口号
 	while ((option = getopt(argc, argv, "a:p:")) != -1) {
 		switch (option) {
 			case 'a':
@@ -459,22 +496,31 @@ int main(int argc, char **argv)
 	if(!server_sockaddr.sin_port) {
 		/* If still zero, that mean no port info provided */
 		server_sockaddr.sin_port = htons(DEFAULT_RDMA_PORT); /* use default port */
-	 }
+    }
+    // bind the addr, build a new connection event, set the cm_client_id with
+    // the conn event, return 0 on success, -1 on failure
 	ret = start_rdma_server(&server_sockaddr);
 	if (ret) {
 		rdma_error("RDMA server failed to start cleanly, ret = %d \n", ret);
 		return ret;
 	}
+    // create protection domain, create completion channel, create completion queue,
+    // create queue pair
 	ret = setup_client_resources();
 	if (ret) { 
 		rdma_error("Failed to setup client resources, ret = %d \n", ret);
 		return ret;
 	}
+    // prepare memory, give the memory to QP, accept connection, recv and ack
+    // a CONNECTION_ESTABLISHED event
 	ret = accept_client_connection();
 	if (ret) {
 		rdma_error("Failed to handle client cleanly, ret = %d \n", ret);
 		return ret;
 	}
+    // wait for client communication to tell us the size of the buffer, then
+    // alloc, register the buffer and send the buffer info to the client.
+    // 这是两个roundtrip？？
 	ret = send_server_metadata_to_client();
 	if (ret) {
 		rdma_error("Failed to send server metadata to the client, ret = %d \n", ret);

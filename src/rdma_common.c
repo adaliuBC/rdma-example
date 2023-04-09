@@ -37,6 +37,9 @@ void show_rdma_buffer_attr(struct rdma_buffer_attr *attr){
 	printf("---------------------------------------------------------\n");
 }
 
+/*
+ * alloc a buffer and register it with the protection domain
+*/
 struct ibv_mr* rdma_buffer_alloc(struct ibv_pd *pd, uint32_t size,
     enum ibv_access_flags permission) 
 {
@@ -67,6 +70,9 @@ struct ibv_mr *rdma_buffer_register(struct ibv_pd *pd,
 		rdma_error("Protection domain is NULL, ignoring \n");
 		return NULL;
 	}
+    // registers a memory region (MR) associated with the
+    // protection domain pd.  The MR's starting address is addr and its
+    // size is length.
 	mr = ibv_reg_mr(pd, addr, length, permission);
 	if (!mr) {
 		rdma_error("Failed to create mr on buffer, errno: %d \n", -errno);

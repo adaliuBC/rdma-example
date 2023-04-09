@@ -49,8 +49,8 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 	 * to define an RDMA connection. 
 	 */
 	ret = rdma_create_id(cm_event_channel, &cm_client_id, 
-			NULL,
-			RDMA_PS_TCP);
+            NULL,
+            RDMA_PS_TCP);
 	if (ret) {
 		rdma_error("Creating cm id failed with errno: %d \n", -errno); 
 		return -errno;
@@ -58,6 +58,8 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 	/* Resolve destination and optional source addresses from IP addresses  to
 	 * an RDMA address.  If successful, the specified rdma_cm_id will be bound
 	 * to a local device. */
+    // get server addr here, bound the client id to that server addr (converted 
+    // to rdma addr already)
 	ret = rdma_resolve_addr(cm_client_id, NULL, (struct sockaddr*) s_addr, 2000);
 	if (ret) {
 		rdma_error("Failed to resolve address, errno: %d \n", -errno);
@@ -79,8 +81,9 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 	}
 	debug("RDMA address is resolved \n");
 
-	 /* Resolves an RDMA route to the destination address in order to 
-	  * establish a connection */
+    /* Resolves an RDMA route to the destination address in order to 
+    * establish a connection */
+    // 找条路过去
 	ret = rdma_resolve_route(cm_client_id, 2000);
 	if (ret) {
 		rdma_error("Failed to resolve route, erno: %d \n", -errno);
@@ -107,6 +110,7 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 	 * in the operating system. All resources are tied to a particular PD. 
 	 * And accessing recourses across PD will result in a protection fault.
 	 */
+    // create pd for the connection
 	pd = ibv_alloc_pd(cm_client_id->verbs);
 	if (!pd) {
 		rdma_error("Failed to alloc pd, errno: %d \n", -errno);
@@ -119,6 +123,7 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 	 * A completion channel is also tied to an RDMA device, hence we will 
 	 * use cm_client_id->verbs. 
 	 */
+    // create completion channel for the connection
 	io_completion_channel = ibv_create_comp_channel(cm_client_id->verbs);
 	if (!io_completion_channel) {
 		rdma_error("Failed to create IO completion event channel, errno: %d\n",
@@ -132,6 +137,7 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 	 * information about the work completion. An I/O request in RDMA world 
 	 * is called "work" ;) 
 	 */
+    // create completion queue based on the completion channel
 	client_cq = ibv_create_cq(cm_client_id->verbs /* which device*/, 
 			CQ_CAPACITY /* maximum capacity*/, 
 			NULL /* user context, not used here */,
@@ -147,22 +153,23 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 		rdma_error("Failed to request notifications, errno: %d\n", -errno);
 		return -errno;
 	}
-       /* Now the last step, set up the queue pair (send, recv) queues and their capacity.
-         * The capacity here is define statically but this can be probed from the 
-	 * device. We just use a small number as defined in rdma_common.h */
-       bzero(&qp_init_attr, sizeof qp_init_attr);
-       qp_init_attr.cap.max_recv_sge = MAX_SGE; /* Maximum SGE per receive posting */
-       qp_init_attr.cap.max_recv_wr = MAX_WR; /* Maximum receive posting capacity */
-       qp_init_attr.cap.max_send_sge = MAX_SGE; /* Maximum SGE per send posting */
-       qp_init_attr.cap.max_send_wr = MAX_WR; /* Maximum send posting capacity */
-       qp_init_attr.qp_type = IBV_QPT_RC; /* QP type, RC = Reliable connection */
-       /* We use same completion queue, but one can use different queues */
-       qp_init_attr.recv_cq = client_cq; /* Where should I notify for receive completion operations */
-       qp_init_attr.send_cq = client_cq; /* Where should I notify for send completion operations */
-       /*Lets create a QP */
-       ret = rdma_create_qp(cm_client_id /* which connection id */,
-		       pd /* which protection domain*/,
-		       &qp_init_attr /* Initial attributes */);
+    /* Now the last step, set up the queue pair (send, recv) queues and their capacity.
+     * The capacity here is define statically but this can be probed from the 
+     * device. We just use a small number as defined in rdma_common.h */
+    // setup a queue pair to use
+    bzero(&qp_init_attr, sizeof qp_init_attr);
+    qp_init_attr.cap.max_recv_sge = MAX_SGE; /* Maximum SGE per receive posting */
+    qp_init_attr.cap.max_recv_wr = MAX_WR; /* Maximum receive posting capacity */
+    qp_init_attr.cap.max_send_sge = MAX_SGE; /* Maximum SGE per send posting */
+    qp_init_attr.cap.max_send_wr = MAX_WR; /* Maximum send posting capacity */
+    qp_init_attr.qp_type = IBV_QPT_RC; /* QP type, RC = Reliable connection */
+    /* We use same completion queue, but one can use different queues */
+    qp_init_attr.recv_cq = client_cq; /* Where should I notify for receive completion operations */
+    qp_init_attr.send_cq = client_cq; /* Where should I notify for send completion operations */
+    /*Lets create a QP */
+    ret = rdma_create_qp(cm_client_id /* which connection id */,
+            pd /* which protection domain*/,
+            &qp_init_attr /* Initial attributes */);
 	if (ret) {
 		rdma_error("Failed to create QP, errno: %d \n", -errno);
 	       return -errno;
@@ -176,6 +183,7 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 static int client_pre_post_recv_buffer()
 {
 	int ret = -1;
+    // register a memory region to save server_metadata?
 	server_metadata_mr = rdma_buffer_register(pd,
 			&server_metadata_attr,
 			sizeof(server_metadata_attr),
@@ -471,8 +479,8 @@ int main(int argc, char **argv) {
 	/* Parse Command Line Arguments */
 	while ((option = getopt(argc, argv, "s:a:p:")) != -1) {
 		switch (option) {
-			case 's':
-				printf("Passed string is : %s , with count %u \n", 
+			case 's':  // string
+				printf("Passed-string is : %s , with count %u \n", 
 						optarg, 
 						(unsigned int) strlen(optarg));
 				src = calloc(strlen(optarg) , 1);
@@ -482,6 +490,7 @@ int main(int argc, char **argv) {
 				}
 				/* Copy the passes arguments */
 				strncpy(src, optarg, strlen(optarg));
+                debug("Transmitted file name: %s\n", src);
 				dst = calloc(strlen(optarg), 1);
 				if (!dst) {
 					rdma_error("Failed to allocate destination memory, -ENOMEM\n");
@@ -489,7 +498,7 @@ int main(int argc, char **argv) {
 					return -ENOMEM;
 				}
 				break;
-			case 'a':
+			case 'a':  // addr
 				/* remember, this overwrites the port info */
 				ret = get_addr(optarg, (struct sockaddr*) &server_sockaddr);
 				if (ret) {
@@ -497,28 +506,32 @@ int main(int argc, char **argv) {
 					return ret;
 				}
 				break;
-			case 'p':
+			case 'p':  // port
 				/* passed port to listen on */
 				server_sockaddr.sin_port = htons(strtol(optarg, NULL, 0)); 
 				break;
-			default:
+			default: 
 				usage();
 				break;
-			}
 		}
+    }
 	if (!server_sockaddr.sin_port) {
-	  /* no port provided, use the default port */
-	  server_sockaddr.sin_port = htons(DEFAULT_RDMA_PORT);
-	  }
+        /* no port provided, use the default port */
+        server_sockaddr.sin_port = htons(DEFAULT_RDMA_PORT);
+    }
 	if (src == NULL) {
 		printf("Please provide a string to copy \n");
 		usage();
-       	}
+    }
+    // build event channel, translate and resolve server ip addr to rdma addr, 
+    // bind the rdma_cm_id to server addr, create protection domain + completion
+    // channel and queue + queue pair
 	ret = client_prepare_connection(&server_sockaddr);
 	if (ret) { 
-		rdma_error("Failed to setup client connection , ret = %d \n", ret);
-		return ret;
-	 }
+        rdma_error("Failed to setup client connection , ret = %d \n", ret);
+        return ret;
+    }
+    // prepost a receive buffer?
 	ret = client_pre_post_recv_buffer(); 
 	if (ret) { 
 		rdma_error("Failed to setup client connection , ret = %d \n", ret);
