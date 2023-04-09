@@ -190,7 +190,7 @@ static int start_rdma_server(struct sockaddr_in *server_addr)
 				-errno);
 		return -errno;
 	}
-	printf("Server is listening successfully at: %s , port: %d \n",
+	info("Server is listening successfully at: %s , port: %d \n",
 			inet_ntoa(server_addr->sin_addr),
 			ntohs(server_addr->sin_port));
 	/* now, we expect a client to connect and generate a RDMA_CM_EVNET_CONNECT_REQUEST 
@@ -299,7 +299,7 @@ static int accept_client_connection()
 	memcpy(&remote_sockaddr /* where to save */, 
 			rdma_get_peer_addr(cm_client_id) /* gives you remote sockaddr */, 
 			sizeof(struct sockaddr_in) /* max size */);
-	printf("A new connection is accepted from %s \n", 
+	info("A new connection is accepted from %s \n", 
 			inet_ntoa(remote_sockaddr.sin_addr));
 	return ret;
 }
@@ -321,9 +321,9 @@ static int send_server_metadata_to_client()
 		return ret;
 	}
 	/* if all good, then we should have client's buffer information, lets see */
-	printf("Client side buffer information is received...\n");
+	info("Client side buffer information is received...\n");
 	show_rdma_buffer_attr(&client_metadata_attr);
-	printf("The client has requested buffer length of : %u bytes \n", 
+	info("The client has requested buffer length of : %u bytes \n", 
 			client_metadata_attr.length);
 	/* We need to setup requested memory buffer. This is where the client will 
 	* do RDMA READs and WRITEs. */
@@ -413,7 +413,7 @@ static int disconnect_and_cleanup()
 		rdma_error("Failed to acknowledge the cm event %d\n", -errno);
 		return -errno;
 	}
-	printf("A disconnect event is received from the client...\n");
+	info("A disconnect event is received from the client...\n");
 	/* We free all the resources */
 	/* Destroy QP */
 	rdma_destroy_qp(cm_client_id);
@@ -452,7 +452,7 @@ static int disconnect_and_cleanup()
 		// we continue anyways;
 	}
 	rdma_destroy_event_channel(cm_event_channel);
-	printf("Server shut-down is complete \n");
+	info("Server shut-down is complete \n");
 	return 0;
 }
 

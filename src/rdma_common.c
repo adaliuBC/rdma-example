@@ -70,9 +70,8 @@ struct ibv_mr *rdma_buffer_register(struct ibv_pd *pd,
 		rdma_error("Protection domain is NULL, ignoring \n");
 		return NULL;
 	}
-    // registers a memory region (MR) associated with the
-    // protection domain pd.  The MR's starting address is addr and its
-    // size is length.
+    // registers a memory region (MR) associated with the protection domain pd.
+    // The MR's starting address is addr and its size is length.
 	mr = ibv_reg_mr(pd, addr, length, permission);
 	if (!mr) {
 		rdma_error("Failed to create mr on buffer, errno: %d \n", -errno);

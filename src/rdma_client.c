@@ -103,7 +103,7 @@ static int client_prepare_connection(struct sockaddr_in *s_addr)
 		rdma_error("Failed to acknowledge the CM event, errno: %d \n", -errno);
 		return -errno;
 	}
-	printf("Trying to connect to server at : %s port: %d \n", 
+	info("Trying to connect to server at : %s port: %d \n", 
 			inet_ntoa(s_addr->sin_addr),
 			ntohs(s_addr->sin_port));
 	/* Protection Domain (PD) is similar to a "process abstraction" 
@@ -239,7 +239,7 @@ static int client_connect_to_server()
 			       -errno);
 		return -errno;
 	}
-	printf("The client is connected successfully \n");
+	info("The client is connected successfully \n");
 	return 0;
 }
 
@@ -248,13 +248,13 @@ static int client_connect_to_server()
  * this program is client driven. But it shown here how to do it for the illustration
  * purposes
  */
-static int client_xchange_metadata_with_server()
+static int client_xchange_metadata_with_server(char *src, int length)
 {
 	struct ibv_wc wc[2];
 	int ret = -1;
 	client_src_mr = rdma_buffer_register(pd,
 			src,
-			strlen(src),
+			length,
 			(IBV_ACCESS_LOCAL_WRITE|
 			 IBV_ACCESS_REMOTE_READ|
 			 IBV_ACCESS_REMOTE_WRITE));
@@ -457,7 +457,7 @@ static int client_disconnect_and_clean()
 		// we continue anyways;
 	}
 	rdma_destroy_event_channel(cm_event_channel);
-	printf("Client resource clean up is complete \n");
+	info("Client resource clean up is complete \n");
 	return 0;
 }
 
@@ -480,7 +480,7 @@ int main(int argc, char **argv) {
 	while ((option = getopt(argc, argv, "s:a:p:")) != -1) {
 		switch (option) {
 			case 's':  // string
-				printf("Passed-string is : %s , with count %u \n", 
+				info("Passed string is : %s , with count %u \n", 
 						optarg, 
 						(unsigned int) strlen(optarg));
 				src = calloc(strlen(optarg) , 1);
@@ -520,7 +520,7 @@ int main(int argc, char **argv) {
         server_sockaddr.sin_port = htons(DEFAULT_RDMA_PORT);
     }
 	if (src == NULL) {
-		printf("Please provide a string to copy \n");
+		rdma_error("Please provide a string to copy \n");
 		usage();
     }
     // build event channel, translate and resolve server ip addr to rdma addr, 
@@ -542,21 +542,25 @@ int main(int argc, char **argv) {
 		rdma_error("Failed to setup client connection , ret = %d \n", ret);
 		return ret;
 	}
-	ret = client_xchange_metadata_with_server();
-	if (ret) {
-		rdma_error("Failed to setup client connection , ret = %d \n", ret);
-		return ret;
-	}
-	ret = client_remote_memory_ops();
-	if (ret) {
-		rdma_error("Failed to finish remote memory ops, ret = %d \n", ret);
-		return ret;
-	}
-	if (check_src_dst()) {
-		rdma_error("src and dst buffers do not match \n");
-	} else {
-		printf("...\nSUCCESS, source and destination buffers match \n");
-	}
+
+    while (1) {
+        ret = client_xchange_metadata_with_server(src, strlen(src));
+        if (ret) {
+            rdma_error("Failed to setup client connection , ret = %d \n", ret);
+            return ret;
+        }
+        ret = client_remote_memory_ops();
+        if (ret) {
+            rdma_error("Failed to finish remote memory ops, ret = %d \n", ret);
+            return ret;
+        }
+        if (check_src_dst()) {
+            rdma_error("src and dst buffers do not match \n");
+        } else {
+            info("...\nSUCCESS, source and destination buffers match \n");
+        }
+        break;
+    }
 	ret = client_disconnect_and_clean();
 	if (ret) {
 		rdma_error("Failed to cleanly disconnect and clean up resources \n");

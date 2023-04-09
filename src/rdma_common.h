@@ -26,13 +26,22 @@
 #include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
 
+// char str_prefix_red[] = "\033[1;31;40m";
+// char str_prefix_green[] = "\033[1;32;40m";
+// char str_prefix_yellow[] = "\033[1;33;40m";
+// char str_postfix[] = "\033[0m";
+
 /* Error Macro*/
 #define rdma_error(msg, args...) do {\
-	fprintf(stderr, "%s : %d : ERROR : "msg, __FILE__, __LINE__, ## args);\
+	fprintf(stderr, "\033[1;31;40m %s : %d : ERROR : "msg"\033[0m", __FILE__, __LINE__, ## args);\
 }while(0);
 
 #define debug(msg, args...) do {\
-    printf("DEBUG: "msg, ## args);\
+    printf("\033[1;37;40m DEBUG: "msg"\033[0m", ## args);\
+}while(0);
+
+#define info(msg, args...) do {\
+    printf("\033[1;33;40m INFO: "msg"\033[0m", ## args);\
 }while(0);
 
 /* Capacity of the completion queue (CQ) */
