@@ -314,7 +314,7 @@ static int client_xchange_metadata_with_server(char *src)
  * 1) RDMA write from src -> remote buffer 
  * 2) RDMA read from remote bufer -> dst
  */ 
-static int client_remote_memory_ops(char *src)
+static int client_remote_memory_read(char *src)
 {
 	struct ibv_wc wc;
 	int ret = -1;
@@ -399,6 +399,93 @@ static int client_remote_memory_ops(char *src)
     info("Read server message: %s\n", dst);
 	return 0;
 }
+
+static int client_remote_memory_write(char *src)
+{
+	struct ibv_wc wc;
+	int ret = -1;
+	/* Step 1: is to copy the local buffer into the remote buffer. We will 
+	 * reuse the previous variables. */
+	/* now we fill up SGE */
+	client_send_sge.addr = (uint64_t) client_src_mr->addr;
+	client_send_sge.length = (uint32_t) client_src_mr->length;
+	client_send_sge.lkey = client_src_mr->lkey;
+	/* now we link to the send work request */
+	bzero(&client_send_wr, sizeof(client_send_wr));
+	client_send_wr.sg_list = &client_send_sge;
+	client_send_wr.num_sge = 1;
+	client_send_wr.opcode = IBV_WR_RDMA_WRITE;
+	client_send_wr.send_flags = IBV_SEND_SIGNALED;
+	/* we have to tell server side info for RDMA */
+	client_send_wr.wr.rdma.rkey = server_metadata_attr.stag.remote_stag;
+	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address;
+	/* Now we post it */
+    info("Writing server memory with: %s\n", src);
+	ret = ibv_post_send(client_qp, 
+		       &client_send_wr,
+	       &bad_client_send_wr);
+	if (ret) {
+		rdma_error("Failed to write client src buffer, errno: %d \n", 
+				-errno);
+		return -errno;
+	}
+	/* at this point we are expecting 1 work completion for the write */
+	ret = process_work_completion_events(io_completion_channel, 
+			&wc, 1);
+	if(ret != 1) {
+		rdma_error("We failed to get 1 work completions , ret = %d \n",
+				ret);
+		return ret;
+	}
+	debug("Client side WRITE is complete \n");
+    info("Write server memory with: %s\n", src);
+	/* Now we prepare a READ using same variables but for destination */
+	client_dst_mr = rdma_buffer_register(pd,
+			dst,
+			strlen(src),
+			(IBV_ACCESS_LOCAL_WRITE | 
+			 IBV_ACCESS_REMOTE_WRITE | 
+			 IBV_ACCESS_REMOTE_READ));
+	if (!client_dst_mr) {
+		rdma_error("We failed to create the destination buffer, -ENOMEM\n");
+		return -ENOMEM;
+	}
+    client_send_sge.addr = (uint64_t) client_dst_mr->addr;
+	client_send_sge.length = (uint32_t) client_dst_mr->length;
+	client_send_sge.lkey = client_dst_mr->lkey;
+	/* now we link to the send work request */
+	bzero(&client_send_wr, sizeof(client_send_wr));
+	client_send_wr.sg_list = &client_send_sge;
+	client_send_wr.num_sge = 1;
+	client_send_wr.opcode = IBV_WR_RDMA_READ;
+	client_send_wr.send_flags = IBV_SEND_SIGNALED;
+	/* we have to tell server side info for RDMA */
+	client_send_wr.wr.rdma.rkey = server_metadata_attr.stag.remote_stag;
+	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address;
+	/* Now we post it */
+    
+    info("Reading server memory...\n");
+	ret = ibv_post_send(client_qp, 
+		       &client_send_wr,
+	       &bad_client_send_wr);
+	if (ret) {
+		rdma_error("Failed to read client dst buffer from the master, errno: %d \n", 
+				-errno);
+		return -errno;
+	}
+	/* at this point we are expecting 1 work completion for the write */
+	ret = process_work_completion_events(io_completion_channel, 
+			&wc, 1);
+	if(ret != 1) {
+		rdma_error("We failed to get 1 work completions , ret = %d \n",
+				ret);
+		return ret;
+	}
+	debug("Client side READ is complete \n");
+    info("Read server message: %s\n", dst);
+	return 0;
+}
+
 
 /* This function disconnects the RDMA connection from the server and cleans up 
  * all the resources.
@@ -565,7 +652,7 @@ int main(int argc, char **argv) {
             rdma_error("Failed to setup client connection , ret = %d \n", ret);
             return ret;
         }
-        ret = client_remote_memory_ops(src);
+        ret = client_remote_memory_read(src);
         if (ret) {
             rdma_error("Failed to finish remote memory ops, ret = %d \n", ret);
             return ret;
