@@ -248,13 +248,13 @@ static int client_connect_to_server()
  * this program is client driven. But it shown here how to do it for the illustration
  * purposes
  */
-static int client_xchange_metadata_with_server(char *src, int length)
+static int client_xchange_metadata_with_server(char *src)
 {
 	struct ibv_wc wc[2];
 	int ret = -1;
 	client_src_mr = rdma_buffer_register(pd,
 			src,
-			length,
+			strlen(src),
 			(IBV_ACCESS_LOCAL_WRITE|
 			 IBV_ACCESS_REMOTE_READ|
 			 IBV_ACCESS_REMOTE_WRITE));
@@ -314,20 +314,10 @@ static int client_xchange_metadata_with_server(char *src, int length)
  * 1) RDMA write from src -> remote buffer 
  * 2) RDMA read from remote bufer -> dst
  */ 
-static int client_remote_memory_ops() 
+static int client_remote_memory_ops(char *src)
 {
 	struct ibv_wc wc;
 	int ret = -1;
-	client_dst_mr = rdma_buffer_register(pd,
-			dst,
-			strlen(src),
-			(IBV_ACCESS_LOCAL_WRITE | 
-			 IBV_ACCESS_REMOTE_WRITE | 
-			 IBV_ACCESS_REMOTE_READ));
-	if (!client_dst_mr) {
-		rdma_error("We failed to create the destination buffer, -ENOMEM\n");
-		return -ENOMEM;
-	}
 	/* Step 1: is to copy the local buffer into the remote buffer. We will 
 	 * reuse the previous variables. */
 	/* now we fill up SGE */
@@ -344,6 +334,7 @@ static int client_remote_memory_ops()
 	client_send_wr.wr.rdma.rkey = server_metadata_attr.stag.remote_stag;
 	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address;
 	/* Now we post it */
+    info("Writing server memory with: %s\n", src);
 	ret = ibv_post_send(client_qp, 
 		       &client_send_wr,
 	       &bad_client_send_wr);
@@ -361,8 +352,19 @@ static int client_remote_memory_ops()
 		return ret;
 	}
 	debug("Client side WRITE is complete \n");
+    info("Write server memory with: %s\n", src);
 	/* Now we prepare a READ using same variables but for destination */
-	client_send_sge.addr = (uint64_t) client_dst_mr->addr;
+	client_dst_mr = rdma_buffer_register(pd,
+			dst,
+			strlen(src),
+			(IBV_ACCESS_LOCAL_WRITE | 
+			 IBV_ACCESS_REMOTE_WRITE | 
+			 IBV_ACCESS_REMOTE_READ));
+	if (!client_dst_mr) {
+		rdma_error("We failed to create the destination buffer, -ENOMEM\n");
+		return -ENOMEM;
+	}
+    client_send_sge.addr = (uint64_t) client_dst_mr->addr;
 	client_send_sge.length = (uint32_t) client_dst_mr->length;
 	client_send_sge.lkey = client_dst_mr->lkey;
 	/* now we link to the send work request */
@@ -375,6 +377,8 @@ static int client_remote_memory_ops()
 	client_send_wr.wr.rdma.rkey = server_metadata_attr.stag.remote_stag;
 	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address;
 	/* Now we post it */
+    
+    info("Reading server memory...\n");
 	ret = ibv_post_send(client_qp, 
 		       &client_send_wr,
 	       &bad_client_send_wr);
@@ -392,6 +396,7 @@ static int client_remote_memory_ops()
 		return ret;
 	}
 	debug("Client side READ is complete \n");
+    info("Read server message: %s\n", dst);
 	return 0;
 }
 
@@ -543,24 +548,33 @@ int main(int argc, char **argv) {
 		return ret;
 	}
 
+    char *str_buffer = calloc(1, 1024);
+    printf("Input: \n");
+    scanf("%s", str_buffer);
+    dst = calloc(1, strlen(str_buffer));
+    if (!dst) {
+        rdma_error("Failed to allocate destination memory, -ENOMEM\n");
+        free(src);
+        return -ENOMEM;
+    }
+    strncpy(dst, str_buffer, strlen(str_buffer));
+    
     while (1) {
-        ret = client_xchange_metadata_with_server(src, strlen(src));
+        ret = client_xchange_metadata_with_server(src);
         if (ret) {
             rdma_error("Failed to setup client connection , ret = %d \n", ret);
             return ret;
         }
-        ret = client_remote_memory_ops();
+        ret = client_remote_memory_ops(src);
         if (ret) {
             rdma_error("Failed to finish remote memory ops, ret = %d \n", ret);
             return ret;
         }
-        if (check_src_dst()) {
-            rdma_error("src and dst buffers do not match \n");
-        } else {
-            info("...\nSUCCESS, source and destination buffers match \n");
-        }
         break;
     }
+
+    free(str_buffer);
+
 	ret = client_disconnect_and_clean();
 	if (ret) {
 		rdma_error("Failed to cleanly disconnect and clean up resources \n");
