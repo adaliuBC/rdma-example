@@ -33,15 +33,15 @@
 
 /* Error Macro*/
 #define rdma_error(msg, args...) do {\
-	fprintf(stderr, "\033[1;31;40m %s : %d : ERROR : "msg"\033[0m", __FILE__, __LINE__, ## args);\
+	fprintf(stderr, "\033[1;31;40m%s : %d : ERROR : "msg"\033[0m", __FILE__, __LINE__, ## args);\
 }while(0);
 
 #define debug(msg, args...) do {\
-    printf("\033[1;37;40m DEBUG: "msg"\033[0m", ## args);\
+    printf("\033[1;37;40mDEBUG: "msg"\033[0m", ## args);\
 }while(0);
 
 #define info(msg, args...) do {\
-    printf("\033[1;33;40m INFO: "msg"\033[0m", ## args);\
+    printf("\033[1;33;40mINFO: "msg"\033[0m", ## args);\
 }while(0);
 
 /* Capacity of the completion queue (CQ) */
@@ -83,6 +83,9 @@ void show_rdma_buffer_attr(struct rdma_buffer_attr *attr);
  */
 int process_rdma_cm_event(struct rdma_event_channel *echannel, 
 		enum rdma_cm_event_type expected_event,
+		struct rdma_cm_event **cm_event);
+
+int receive_rdma_cm_event(struct rdma_event_channel *echannel,
 		struct rdma_cm_event **cm_event);
 
 /* Allocates an RDMA buffer of size 'length' with permission permission. This 

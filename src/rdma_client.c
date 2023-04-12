@@ -27,11 +27,11 @@ static struct ibv_sge client_send_sge, server_recv_sge;
 /* Source and Destination buffers, where RDMA operations source and sink */
 static char *src = NULL, *dst = NULL; 
 
-/* This is our testing function */
-static int check_src_dst() 
-{
-	return memcmp((void*) src, (void*) dst, strlen(src));
-}
+// /* This is our testing function */
+// static int check_src_dst() 
+// {
+// 	return memcmp((void*) src, (void*) dst, strlen(src));
+// }
 
 /* This function prepares client side connection resources for an RDMA connection */
 static int client_prepare_connection(struct sockaddr_in *s_addr)
@@ -248,13 +248,13 @@ static int client_connect_to_server()
  * this program is client driven. But it shown here how to do it for the illustration
  * purposes
  */
-static int client_xchange_metadata_with_server(char *src)
+static int client_xchange_metadata_with_server(char *src_msg)
 {
 	struct ibv_wc wc[2];
 	int ret = -1;
 	client_src_mr = rdma_buffer_register(pd,
-			src,
-			strlen(src),
+			src_msg,
+			strlen(src_msg),
 			(IBV_ACCESS_LOCAL_WRITE|
 			 IBV_ACCESS_REMOTE_READ|
 			 IBV_ACCESS_REMOTE_WRITE));
@@ -314,7 +314,7 @@ static int client_xchange_metadata_with_server(char *src)
  * 1) RDMA write from src -> remote buffer 
  * 2) RDMA read from remote bufer -> dst
  */ 
-static int client_remote_memory_read(char *src)
+static int client_remote_memory_read(char *src_msg)
 {
 	struct ibv_wc wc;
 	int ret = -1;
@@ -334,12 +334,12 @@ static int client_remote_memory_read(char *src)
 	client_send_wr.wr.rdma.rkey = server_metadata_attr.stag.remote_stag;
 	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address;
 	/* Now we post it */
-    info("Writing server memory with: %s\n", src);
+    info("Writing server memory with: %s\n", src_msg);
 	ret = ibv_post_send(client_qp, 
 		       &client_send_wr,
 	       &bad_client_send_wr);
 	if (ret) {
-		rdma_error("Failed to write client src buffer, errno: %d \n", 
+		rdma_error("Failed to write client src_msg buffer, errno: %d \n", 
 				-errno);
 		return -errno;
 	}
@@ -352,11 +352,18 @@ static int client_remote_memory_read(char *src)
 		return ret;
 	}
 	debug("Client side WRITE is complete \n");
-    info("Write server memory with: %s\n", src);
+    info("Write server memory with: %s\n", src_msg);
 	/* Now we prepare a READ using same variables but for destination */
-	client_dst_mr = rdma_buffer_register(pd,
+	
+    dst = calloc(strlen(src_msg), 1);
+    if (!dst) {
+        rdma_error("Failed to allocate destination memory, -ENOMEM\n");
+        free(src);
+        return -ENOMEM;
+    }
+    client_dst_mr = rdma_buffer_register(pd,
 			dst,
-			strlen(src),
+			strlen(src_msg),
 			(IBV_ACCESS_LOCAL_WRITE | 
 			 IBV_ACCESS_REMOTE_WRITE | 
 			 IBV_ACCESS_REMOTE_READ));
@@ -400,7 +407,7 @@ static int client_remote_memory_read(char *src)
 	return 0;
 }
 
-static int client_remote_memory_write(char *src)
+static int client_remote_memory_write(char *src_msg)
 {
 	struct ibv_wc wc;
 	int ret = -1;
@@ -420,7 +427,7 @@ static int client_remote_memory_write(char *src)
 	client_send_wr.wr.rdma.rkey = server_metadata_attr.stag.remote_stag;
 	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address;
 	/* Now we post it */
-    info("Writing server memory with: %s\n", src);
+    info("Writing server memory with: %s\n", src_msg);
 	ret = ibv_post_send(client_qp, 
 		       &client_send_wr,
 	       &bad_client_send_wr);
@@ -438,11 +445,11 @@ static int client_remote_memory_write(char *src)
 		return ret;
 	}
 	debug("Client side WRITE is complete \n");
-    info("Write server memory with: %s\n", src);
+    info("Write server memory with: %s\n", src_msg);
 	/* Now we prepare a READ using same variables but for destination */
 	client_dst_mr = rdma_buffer_register(pd,
 			dst,
-			strlen(src),
+			strlen(src_msg),
 			(IBV_ACCESS_LOCAL_WRITE | 
 			 IBV_ACCESS_REMOTE_WRITE | 
 			 IBV_ACCESS_REMOTE_READ));
@@ -583,12 +590,6 @@ int main(int argc, char **argv) {
 				/* Copy the passes arguments */
 				strncpy(src, optarg, strlen(optarg));
                 debug("Transmitted file name: %s\n", src);
-				dst = calloc(strlen(optarg), 1);
-				if (!dst) {
-					rdma_error("Failed to allocate destination memory, -ENOMEM\n");
-					free(src);
-					return -ENOMEM;
-				}
 				break;
 			case 'a':  // addr
 				/* remember, this overwrites the port info */
@@ -635,29 +636,24 @@ int main(int argc, char **argv) {
 		return ret;
 	}
 
+    // read in the strng to be transmitted
     char *str_buffer = calloc(1, 1024);
     printf("Input: \n");
     scanf("%s", str_buffer);
-    dst = calloc(1, strlen(str_buffer));
-    if (!dst) {
-        rdma_error("Failed to allocate destination memory, -ENOMEM\n");
-        free(src);
-        return -ENOMEM;
-    }
-    strncpy(dst, str_buffer, strlen(str_buffer));
     
-    while (1) {
-        ret = client_xchange_metadata_with_server(src);
+    while (strncmp(str_buffer, "exit", 4)) {
+        ret = client_xchange_metadata_with_server(str_buffer);
         if (ret) {
             rdma_error("Failed to setup client connection , ret = %d \n", ret);
             return ret;
         }
-        ret = client_remote_memory_read(src);
+        ret = client_remote_memory_read(str_buffer);
         if (ret) {
             rdma_error("Failed to finish remote memory ops, ret = %d \n", ret);
             return ret;
         }
-        break;
+        printf("Input: \n");
+        scanf("%s", str_buffer);
     }
 
     free(str_buffer);
