@@ -551,6 +551,12 @@ int main(int argc, char **argv) {
         rdma_error("Failed to register client buffers , ret = %d \n", ret);
         return ret;
     }
+        
+    ret = client_xchange_metadata_with_server();
+    if (ret) {
+        rdma_error("Failed to setup client connection , ret = %d \n", ret);
+        return ret;
+    }
     
     // read in the strng to be transmitted
     char *str_buffer = calloc(1, PAGE_SIZE);
@@ -559,11 +565,6 @@ int main(int argc, char **argv) {
     
     while (strncmp(str_buffer, "exit", 4)) {
         strcpy(src, str_buffer);
-        ret = client_xchange_metadata_with_server();
-        if (ret) {
-            rdma_error("Failed to setup client connection , ret = %d \n", ret);
-            return ret;
-        }
         ret = client_remote_memory_write(str_buffer);
         if (ret) {
             rdma_error("Failed to finish remote memory write, ret = %d \n", ret);
