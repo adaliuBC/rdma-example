@@ -247,7 +247,7 @@ static int accept_client_connection()
         return -ENOMEM;
     }
     /* We pre-post this receive buffer on the QP. SGE credentials is where we 
-        * receive the metadata from the client */
+     * receive the metadata from the client */
     client_recv_sge.addr = (uint64_t) client_metadata_mr->addr; // same as &client_buffer_attr
     client_recv_sge.length = client_metadata_mr->length;
     client_recv_sge.lkey = client_metadata_mr->lkey;
@@ -518,6 +518,7 @@ int main(int argc, char **argv)
 		rdma_error("Failed to handle client cleanly, ret = %d \n", ret);
 		return ret;
 	}
+    // bp1
 
     // wait for client communication to tell us the size of the buffer, then
     // alloc, register the buffer and send the buffer info to the client.

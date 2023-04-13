@@ -26,6 +26,8 @@
 #include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
 
+#define PAGE_SIZE 1024
+
 // char str_prefix_red[] = "\033[1;31;40m";
 // char str_prefix_green[] = "\033[1;32;40m";
 // char str_prefix_yellow[] = "\033[1;33;40m";
